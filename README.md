@@ -39,6 +39,10 @@ Google Apps Script، Google Sheets، HTML، CSS، JavaScript.
 
 
 
+## Setup | الإعداد والتشغيل
+
+[دليل الإعداد والتشغيل بالعربية](SETUP.md) — إنشاء نسخة تجريبية، ضبط البيانات، النشر، والاختبار.
+
 ## Screenshots | صور الواجهات
 ### واجهة تسجيل الخروج
 ![واجهة تسجيل الخروج](screenshots/exit-form.png)
@@ -51,3 +55,4 @@ Google Apps Script، Google Sheets، HTML، CSS، JavaScript.
 
 ### شكل الجداول في Google Sheet
 ![الجداول في google sheet](screenshots/excel.png)
+
