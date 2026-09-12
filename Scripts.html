@@ -1,0 +1,165 @@
+<script>
+'use strict';
+const app = document.getElementById('app');
+const state = {data:null,busy:false,loading:false,version:0,timer:null,serverNow:0,syncAt:0,stale:false,noticeTimer:null,qrMode:'all',qrGroup:'',printing:false};
+function rpc(name, payload) {
+  return new Promise((resolve,reject) => {
+    let done=false;
+    const timeout=setTimeout(()=>finish(null,new Error('تعذر الاتصال، أعد المحاولة للتحقق من الحالة')),45000);
+    function finish(response,error){
+      if(done)return;done=true;clearTimeout(timeout);
+      if(error)reject(error);else if(response&&response.ok)resolve(response.data);
+      else reject(new Error(response&&response.message||'تعذر تنفيذ العملية، حاول مرة أخرى'));
+    }
+    google.script.run.withSuccessHandler(response=>finish(response)).withFailureHandler(()=>finish(null,new Error('تعذر الاتصال، حاول مرة أخرى')))[name](payload);
+  });
+}
+function notice(message,kind='error') {
+  clearTimeout(state.noticeTimer);
+  const el=document.getElementById('notice');el.textContent=message;el.className='notice '+kind;el.hidden=!message;
+  if(message&&kind==='success')state.noticeTimer=setTimeout(()=>{el.hidden=true;},3000);
+}
+function timeText(time) {
+  return new Intl.DateTimeFormat('ar-QA-u-nu-latn',{timeZone:state.data.settings.TIMEZONE,hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time));
+}
+function tick() {
+  if(!state.data)return;
+  const now=state.serverNow+performance.now()-state.syncAt;
+  document.querySelectorAll('[data-exit]').forEach(el=>{
+    const minutes=Math.max(0,(now-Number(el.dataset.exit))/60000);
+    const level=durationLevel(minutes,state.data.settings);
+    el.className='pill '+level;
+    el.textContent=(level==='green'?'🟢 ':level==='orange'?'🟠 ':'🔴 ')+shortDuration(minutes);
+  });
+}
+function saveForm() {
+  const form=document.getElementById('exit-form');
+  return form?{staffName:document.getElementById('staff-name').value,studentId:document.getElementById('student').value,destinationId:document.getElementById('destination').value}:null;
+}
+function options(rows,id,name,placeholder) {
+  return '<option value="">'+placeholder+'</option>'+rows.map(row=>'<option value="'+esc(row[id])+'">'+esc(row[name])+'</option>').join('');
+}
+function activeCard(row,supervisor) {
+  return '<article data-record="'+esc(row.RecordID)+'" class="panel '+(supervisor?'':'card-panel')+'"><h2 class="student-name">'+esc(row.StudentName)+'</h2>'+
+    (supervisor?'<p>'+esc(row.GroupName)+'</p>':'')+
+    '<dl class="details"><div><dt>المكان</dt><dd>'+esc(row.DestinationName)+'</dd></div><div><dt>وقت الخروج</dt><dd>'+esc(timeText(row.ExitTime))+'</dd></div></dl>'+
+    '<p class="small">المعلمة: '+esc(row.StaffName)+'</p><span class="pill" data-exit="'+row.ExitTime+'"></span>'+
+    '<button class="wide" type="button" data-return="'+esc(row.RecordID)+'">تسجيل العودة</button></article>';
+}
+function bindReturns(rows) {
+  const indexed=new Map(rows.map(row=>[row.RecordID,row]));
+  document.querySelectorAll('[data-return]').forEach(button=>button.onclick=()=>{
+    const row=indexed.get(button.dataset.return);
+    if(!row)return;
+    const payload={recordId:row.RecordID};
+    if(BOOT.view==='card')payload.cardId=BOOT.cardId;
+    return mutate('returnStudent',payload);
+  });
+}
+function renderCard(saved) {
+  const data=state.data;
+  const group=document.getElementById('card-group');
+  group.textContent=data.current?data.current.GroupName:data.group.GroupName;group.hidden=false;
+  document.body.classList.toggle('theme-pink',data.group.CardTheme==='Pink');
+  if(data.current){app.innerHTML=activeCard(data.current,false);bindReturns([data.current]);return;}
+  if(data.canIssue===false){app.innerHTML='<p class="empty">البطاقة غير متاحة لتسجيل خروج جديد</p>';return;}
+  app.innerHTML='<section class="panel card-panel"><form id="exit-form" class="exit-form">'+
+    '<label>اسم المعلمة<input id="staff-name" name="staffName" type="text" required maxlength="100" autocomplete="off"></label>'+
+    '<label>'+(data.group.CardTheme==='Pink'?'اسم الطالبة':'اسم الطالب')+'<select id="student" required>'+options(data.students,'StudentID','StudentName','يرجى اختيار الاسم')+'</select></label>'+
+    '<label>المكان<select id="destination" required>'+options(data.destinations,'DestinationID','DestinationName','يرجى اختيار المكان')+'</select></label>'+
+    '<button type="submit">تسجيل الخروج</button></form></section>';
+  if(saved){document.getElementById('staff-name').value=saved.staffName;document.getElementById('student').value=saved.studentId;document.getElementById('destination').value=saved.destinationId;}
+  document.getElementById('exit-form').addEventListener('submit',event=>{
+    event.preventDefault();const values=saveForm();
+    if(!values.staffName.trim()){notice('يرجى كتابة اسم المعلمة');return;}
+    mutate('createExit',Object.assign({cardId:BOOT.cardId},values));
+  });
+}
+function renderSupervisor() {
+  const rows=state.data.active;
+  app.innerHTML='<p class="count">في الخارج الآن: '+rows.length+'</p>'+(rows.length?'<div class="active-list">'+rows.map(row=>activeCard(row,true)).join('')+'</div>':'<p class="empty">لا يوجد طلاب أو طالبات في الخارج حاليًا</p>');
+  bindReturns(rows);
+}
+function render(saved) {
+  if(BOOT.view==='card')renderCard(saved);
+  else if(BOOT.view==='supervisor')renderSupervisor();
+  else if(BOOT.view==='qr')renderQr();
+  else app.innerHTML='<p class="empty">امسح رمز بطاقة الصف لتسجيل الخروج أو العودة.</p>';
+  tick();
+}
+function syncClock(data){state.serverNow=data.serverNow;state.syncAt=performance.now();}
+function schedule(){clearTimeout(state.timer);if(BOOT.view==='card'||BOOT.view==='supervisor')state.timer=setTimeout(()=>load(true),(state.data?state.data.settings.AUTO_REFRESH_SECONDS:30)*1000);}
+function sameRecord(a,b){
+  if(!a||!b)return a===b;
+  return ['RecordID','StudentName','GroupName','StaffName','DestinationName','ExitTime'].every(key=>a[key]===b[key]);
+}
+function applyLive(data){
+  syncClock(data);
+  if(BOOT.view==='card'){
+    const changed=!sameRecord(state.data.current,data.current);
+    state.data.current=data.current;
+    if(changed)renderCard(state.savedForm);
+  }else if(BOOT.view==='supervisor'){
+    const previous=state.data.active,next=data.active;
+    state.data.active=next;
+    if(!previous.length||!next.length){if(previous.length!==next.length)renderSupervisor();}
+    else{
+      const before=new Map(previous.map(row=>[row.RecordID,row]));
+      const nodes=new Map(Array.from(app.querySelectorAll('[data-record]')).map(el=>[el.dataset.record,el]));
+      const ids=new Set(next.map(row=>row.RecordID));
+      nodes.forEach((node,id)=>{if(!ids.has(id))node.remove();});
+      const list=app.querySelector('.active-list');
+      next.forEach((row,index)=>{
+        let node=nodes.get(row.RecordID);
+        if(!node||!sameRecord(before.get(row.RecordID),row)){
+          const template=document.createElement('template');template.innerHTML=activeCard(row,true);const fresh=template.content.firstElementChild;
+          if(node)node.replaceWith(fresh);node=fresh;
+        }
+        if(list.children[index]!==node)list.insertBefore(node,list.children[index]||null);
+      });
+      app.querySelector('.count').textContent='في الخارج الآن: '+next.length;
+      bindReturns(next);
+    }
+  }
+  tick();
+}
+async function load(background=false) {
+  if(state.loading||state.busy||state.printing)return;
+  state.loading=true;const version=state.version;clearTimeout(state.timer);
+  try {
+    const polling=background&&state.data&&(BOOT.view==='card'||BOOT.view==='supervisor');
+    const data=await rpc(polling?(BOOT.view==='card'?'getCardState':'getSupervisorState'):'getPageData',BOOT);
+    if(version!==state.version)return;
+    if(polling)applyLive(data);
+    else{const saved=saveForm();state.data=data;syncClock(data);document.getElementById('school-name').textContent=data.settings.SCHOOL_NAME;render(saved);}
+    state.stale=false;document.getElementById('retry').hidden=true;
+    if(!background)notice('');
+  }catch(error){
+    state.stale=true;notice(error.message);document.getElementById('retry').hidden=false;
+    if(!state.data)app.innerHTML='';
+  }finally{state.loading=false;app.setAttribute('aria-busy','false');schedule();}
+}
+async function mutate(name,payload) {
+  if(state.busy)return;state.savedForm=saveForm()||state.savedForm;state.busy=true;state.version++;clearTimeout(state.timer);
+  document.querySelectorAll('button,select,input').forEach(el=>el.disabled=true);
+  try{
+    const result=await rpc(name,payload);
+    if(BOOT.view==='card')applyLive({current:name==='createExit'?result.record:null,serverNow:result.serverNow});
+    else applyLive({active:state.data.active.filter(row=>row.RecordID!==result.record.RecordID),serverNow:result.serverNow});
+    state.stale=false;document.getElementById('retry').hidden=true;notice(result.message,'success');
+  }catch(error){notice(error.message);state.stale=true;document.getElementById('retry').hidden=false;}
+  finally{state.busy=false;document.querySelectorAll('button,select,input').forEach(el=>el.disabled=false);schedule();}
+}
+const titles={card:'بطاقة خروج طالب/ة',supervisor:'لوحة متابعة المشرفة',qr:'بطاقات خروج الصفوف',home:'بطاقة الخروج الذكية'};
+ document.getElementById('page-title').textContent=titles[BOOT.view]||'بطاقة الخروج الذكية';
+if(BOOT.view==='card'||BOOT.view==='supervisor'){
+  document.body.classList.add('daily-view');
+  const header=document.querySelector('.brand');
+  header.prepend(document.getElementById('page-title'));
+}
+document.getElementById('retry').onclick=()=>load();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)load(true);});
+window.addEventListener('beforeprint',()=>{state.printing=true;});
+window.addEventListener('afterprint',()=>{state.printing=false;});
+setInterval(tick,1000);load();
+</script>

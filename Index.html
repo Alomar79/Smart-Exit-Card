@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head><base target="_top"><?!= include_('Styles'); ?><?!= qrStyles ?></head>
+<body>
+  <header class="brand"><div id="official-logo"><?!= include_('SchoolLogo'); ?></div><p id="school-name" hidden>مدرسة السلم الخامسة</p></header>
+  <main class="container">
+    <h1 id="page-title">بطاقة الخروج الذكية</h1>
+    <p id="card-group" class="group-title daily-group" hidden></p>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <button id="retry" class="secondary" type="button" hidden>إعادة المحاولة</button>
+    <div id="app" aria-busy="true"><p>جارٍ التحميل…</p></div>
+  </main>
+  <script>const BOOT = <?!= boot ?>;</script>
+  <?!= qrAssets ?>
+  <?!= include_('ClientUtils'); ?>
+  <?!= include_('Scripts'); ?>
+</body>
+</html>

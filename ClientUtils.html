@@ -1,0 +1,17 @@
+<script>
+'use strict';
+function esc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+}
+function durationLevel(minutes, settings) {
+  return minutes < settings.GREEN_LIMIT ? 'green' : minutes < settings.ORANGE_LIMIT ? 'orange' : 'red';
+}
+function shortDuration(value) {
+  const minutes = Math.max(0, Math.floor(value));
+  const minuteText = n => n === 1 ? 'دقيقة' : n === 2 ? 'دقيقتان' : n >= 3 && n <= 10 ? n + ' دقائق' : n + ' دقيقة';
+  if (minutes < 60) return minuteText(minutes);
+  const hours = Math.floor(minutes / 60), rest = minutes % 60;
+  const hoursText = hours === 1 ? 'ساعة' : hours === 2 ? 'ساعتان' : hours <= 10 ? hours + ' ساعات' : hours + ' ساعة';
+  return hoursText + (rest ? ' و' + minuteText(rest) : '');
+}
+</script>
